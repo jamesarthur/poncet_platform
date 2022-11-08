@@ -16,6 +16,8 @@ typedef enum {
   MODE_TRACK,     // Tracking
   MODE_PAUSE,     // Pause tracking
   MODE_REWIND,    // Rewind to start
+  MODE_DRIFT_OUT, // Drift align modes
+  MODE_DRIFT_BACK,
   MODE_DISABLED   // For testing motor
 } Mode;
 Mode mode;
@@ -25,11 +27,19 @@ typedef enum {
   TRACK_LUNAR,
   TRACK_SOLAR,
   TRACK_KING,
+  TRACK_DRIFT_ALIGN,
   TRACK_FAST      // Max-speed shuttle to start/end
 } TrackingMode;
 TrackingMode trackingMode;
 
-
+/*
+typedef enum {
+  DRIFT_NONE,
+  DRIFT_OUT,
+  DRIFT_BACK,
+} DriftMode;
+DriftMode driftMode;
+*/
 
 // PINS
 const int DIR_PIN = A0;
@@ -91,8 +101,9 @@ const float SPEED_LUNAR = 14.685;
 const float SPEED_SOLAR = 15.0;
 const float SPEED_KING = 15.0369;
 
-const float SPEED_MAX = 450.0; // Max speed - about 30sec for a full translation
-const float ACCELERATION_TIME = 5.0; // Number of seconds to spend accelerating
+const float SPEED_MAX = 450.0; // Max speed - about 30sec for a full translation, in arcsec/sec
+const float ACCELERATION_TIME = 7.0; // Time to spend accelerating/decelerating, in sec
+const float DRIFT_ALIGN_SPEED = SPEED_SIDEREAL*10.0; // Max speed used to polar align, in arcsec/sec
 
 // PLATFORM DRIVE
 const long  DRIVE_GEAR_RATIO = 40;            // 40 = 40:1 
@@ -114,7 +125,6 @@ const float STEPS_PER_ARCSEC = (float)STEPS_PER_REVOLUTION*DRIVE_DISTANCE_PER_AR
 const long BACKTRACK_AMOUNT_STEPS = MAX_STEPS/10.0;
 
 
-
 /*
 // DERIVATIVE SPEEDS FOR MODES
 const float TRACKING_SPEED = STEPS_PER_SECOND;
@@ -132,6 +142,9 @@ const float REWIND_SPEED = STEPS_PER_SECOND*20.0;
 //long lastLcdUpdate = 0;
 float trackingSpeed = 0.0;
 
+float driftTime = 20.0;
+long driftStartPos = 0;
+long driftStartTime = 0;
 
 ////// INIT //////
 
@@ -359,9 +372,23 @@ void loop() {
   switch(mode) {
     case MODE_POWER_ON:
     case MODE_DISABLED:
-      break;
     case MODE_TRACK:
     case MODE_PAUSE:
+      break;
+
+    case MODE_DRIFT_OUT:
+      if((millis()-driftStartTime > (long)(driftTime*1000.0/2.0)) || (stepper.currentPosition() >= MAX_STEPS)) {
+        setMode(MODE_DRIFT_BACK);
+      }
+      break;
+
+    case MODE_DRIFT_BACK:
+      if(stepper.distanceToGo() == 0) {
+        setMode(MODE_TRACK);
+      }
+      break;
+
+
     case MODE_REWIND:
       //if(time-lastLcdUpdate > 500) {    // 2fps
       //  lcdUpdateSpeed();
@@ -396,13 +423,27 @@ void setMode(Mode new_mode) {
 
   switch(mode) {
     case MODE_POWER_ON:
+      break;
+
     case MODE_TRACK:
       lcdUpdateSpeed();
       track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
       break;
+
     case MODE_PAUSE:
       stop(false);
       break;
+
+    case MODE_DRIFT_OUT:
+      driftStartPos = stepper.currentPosition();
+      driftStartTime = millis();
+      drift_out();
+      break;
+    
+    case MODE_DRIFT_BACK:
+      drift_back(driftTime, driftStartPos);
+      break;
+
     case MODE_REWIND:
       track(0, SPEED_MAX, SPEED_MAX/ACCELERATION_TIME);
       break;
@@ -430,6 +471,7 @@ void setTrackMode(TrackingMode new_mode) {
     case TRACK_LUNAR:
     case TRACK_SOLAR:
     case TRACK_KING:
+    case TRACK_DRIFT_ALIGN: // Initially just uses normal tracking speed
     case TRACK_FAST:
     default:
       if(mode==MODE_TRACK) {
@@ -448,7 +490,8 @@ void track(long position, float speed, float acceleration) {
   Serial.print(speed);
   Serial.print("steps/sec, acceleration: ");
   Serial.print(acceleration);
-  Serial.println("steps/sec2");
+  Serial.print("steps/sec2; current position ");
+  Serial.println(stepper.currentPosition());
   
   stepper.setMaxSpeed(speed);
   stepper.setAcceleration(acceleration);
@@ -467,6 +510,31 @@ void stop(bool emergency) {
   stepper.stop();
 }
 
+
+// Track for a certain amount of time at maxSpeed
+void drift_out() {
+  Serial.print("DRIFTING OUT AT ");
+  Serial.print(DRIFT_ALIGN_SPEED, 5);
+  Serial.print(" arcsec/s, position ");
+  Serial.println(stepper.currentPosition());
+
+  track(MAX_STEPS, DRIFT_ALIGN_SPEED*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+}
+
+// Return to the original framing, trying to compensate for *some* of the star's movement
+void drift_back(float elapsedTime, long originPos) {
+  Serial.print("DRIFTING BACK TO ");
+  Serial.print(originPos);
+  Serial.print(" FROM ");
+  Serial.print(stepper.currentPosition());
+  Serial.print(" AT ");
+  Serial.print(DRIFT_ALIGN_SPEED, 5);
+  Serial.print("arcsec/s; ELAPSED TIME ");
+  Serial.print(elapsedTime);
+  Serial.println("s");
+
+  track(originPos+SPEED_SIDEREAL*STEPS_PER_ARCSEC*elapsedTime, DRIFT_ALIGN_SPEED*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+}
 
 
 // LED functions
@@ -504,7 +572,7 @@ void ledBlink(long rate) {
 
 // Button functions
 
-// Button A sets the tracking mode
+// Button A cycles the tracking mode
 void onButtonAPressed() {
   switch(trackingMode) {
     case TRACK_SIDEREAL:
@@ -517,10 +585,14 @@ void onButtonAPressed() {
       setTrackMode(TRACK_KING);
       break;
     case TRACK_KING:
+      setTrackMode(TRACK_DRIFT_ALIGN);
+      break;
+    case TRACK_DRIFT_ALIGN:
       setTrackMode(TRACK_FAST);
       break;
     case TRACK_FAST:
       setTrackMode(TRACK_SIDEREAL);
+      break;
     default:
       break;
   }
@@ -529,18 +601,29 @@ void onButtonAPressed() {
 
 // Buttons B & C increase and decrease speed
 void onButtonBPressed() {
-  if(trackingMode==TRACK_FAST) {
-    trackingSpeed = getTrackingSpeed(trackingMode);
-    track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+  switch(trackingMode) {
+    case TRACK_FAST:
+      trackingSpeed = getTrackingSpeed(trackingMode);
+      track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+      break;
 
-  } else {
-    trackingSpeed = trackingSpeed/1.05;
-    if(trackingSpeed < 0.0)
-      trackingSpeed = 0.0;
+    case TRACK_DRIFT_ALIGN:
+      // Decrease drift alignment time
+      driftTime -= 5.0f;
+      if(driftTime < 5.0f)
+        driftTime = 5.0f;
+      break;
 
-    if(mode==MODE_TRACK) {
-      stepper.setMaxSpeed(trackingSpeed*STEPS_PER_ARCSEC);
-    }
+    default:
+      trackingSpeed = trackingSpeed/1.05;   // -5%
+      if(trackingSpeed < 0.0)
+        trackingSpeed = 0.0;
+
+      if(mode==MODE_TRACK) {
+        // Don't unpause automatically
+        stepper.setMaxSpeed(trackingSpeed*STEPS_PER_ARCSEC);
+      }
+      break;
   }
 
   lcdUpdateSpeed();
@@ -548,17 +631,29 @@ void onButtonBPressed() {
 
 
 void onButtonCPressed() {
-  if(trackingMode==TRACK_FAST) {
-    trackingSpeed = getTrackingSpeed(trackingMode);
-    track(0, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
-  } else {
-    trackingSpeed = trackingSpeed*1.05;
-    if(trackingSpeed > SPEED_MAX)
-      trackingSpeed = SPEED_MAX;
+  switch(trackingMode) {
+    case TRACK_FAST:
+      trackingSpeed = getTrackingSpeed(trackingMode);
+      track(0, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+      break;
 
-    if(mode==MODE_TRACK) {
-      stepper.setMaxSpeed(trackingSpeed*STEPS_PER_ARCSEC);
-    }
+    case TRACK_DRIFT_ALIGN:
+      // Increase drift alignment time
+      driftTime += 5.0f;
+      if(driftTime > 30.0f)
+        driftTime = 30.0f;
+      break;
+
+    default:
+      trackingSpeed = trackingSpeed*1.05;   // +5%
+      if(trackingSpeed > SPEED_MAX)
+        trackingSpeed = SPEED_MAX;
+
+      if(mode==MODE_TRACK) {
+        // Don't unpause automatically
+        stepper.setMaxSpeed(trackingSpeed*STEPS_PER_ARCSEC);
+      }
+      break;
   }
 
   lcdUpdateSpeed();
@@ -569,11 +664,24 @@ void onButtonCPressed() {
 void onButtonDPressed() {
   switch(mode) {
     case MODE_TRACK:
-      setMode(MODE_PAUSE);
+      if(trackingMode == TRACK_DRIFT_ALIGN)
+        setMode(MODE_DRIFT_OUT);
+      else
+        setMode(MODE_PAUSE);
       break;
+
     case MODE_PAUSE:
-      setMode(MODE_TRACK);
+      if(trackingMode == TRACK_DRIFT_ALIGN)
+        setMode(MODE_DRIFT_OUT);
+      else
+        setMode(MODE_TRACK);
       break;
+
+    case MODE_DRIFT_OUT:
+    case MODE_DRIFT_BACK:
+      setMode(MODE_TRACK);  // Cancel
+      break;
+
     default:
       break;
   }
@@ -600,6 +708,12 @@ void lcdUpdateMode() {
     case MODE_PAUSE:
       lcd.print("PAUSE   ");
       break;
+    case MODE_DRIFT_OUT:
+      lcd.print("ALIGN < ");
+      break;
+    case MODE_DRIFT_BACK:
+      lcd.print("ALIGN > ");
+      break;
     case MODE_REWIND:
       lcd.print("REWIND  ");
       break;
@@ -624,6 +738,9 @@ void lcdUpdateTrackingMode() {
     case TRACK_KING:
       lcd.print("King    ");
       break;
+    case TRACK_DRIFT_ALIGN:
+      lcd.print("Drift PA");
+      break;
     case TRACK_FAST:
       lcd.print("Fast    ");
       break;
@@ -635,11 +752,21 @@ void lcdUpdateTrackingMode() {
 
 void lcdUpdateSpeed() {
   //float speed = stepper.speed()/STEPS_PER_ARCSEC;
-  float speed = trackingSpeed;
+  float speed;
+  switch(trackingMode) {
+    case TRACK_DRIFT_ALIGN:
+      speed = driftTime;
+    break;
+
+    default:
+      speed = trackingSpeed;
+      break;
+  }
 
   lcd.setCursor(9, 1);
   lcd.print(speed, 5);
 }
+
 
 
 
@@ -661,10 +788,14 @@ float getTrackingSpeed(TrackingMode tm) {
     case TRACK_KING:
       ret = SPEED_KING;
       break;
+    case TRACK_DRIFT_ALIGN:
+      ret = SPEED_SIDEREAL;   // Uses sidereal until drift is triggered
+      break;
     
     case TRACK_FAST:
     default: 
       ret = SPEED_MAX;
+      break;
   }  
   return ret;
 }
@@ -681,6 +812,10 @@ float getTrackingAcceleration(TrackingMode tm) {
       ret = getTrackingSpeed(tm)/ACCELERATION_TIME;
       break;
     
+    case TRACK_DRIFT_ALIGN:
+      ret = DRIFT_ALIGN_SPEED/ACCELERATION_TIME;
+      break;
+
     case TRACK_FAST:
     default:
       ret = SPEED_MAX/ACCELERATION_TIME;
@@ -701,6 +836,10 @@ const char* getModeName(Mode m) {
       break;
     case MODE_PAUSE:
       return "PAUSE";
+      break;
+    case MODE_DRIFT_OUT:
+    case MODE_DRIFT_BACK:
+      return "ALIGN";
       break;
     case MODE_REWIND:
       return "REWIND";
@@ -726,6 +865,9 @@ const char* getTrackingModeName(TrackingMode tm) {
       break;
     case TRACK_KING:
       return "KING";
+      break;
+    case TRACK_DRIFT_ALIGN:
+      return "DRIFT PA";
       break;
     case TRACK_FAST:
       return "FAST";
