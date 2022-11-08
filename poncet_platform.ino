@@ -15,7 +15,8 @@ typedef enum {
   MODE_POWER_ON,  // Warm-up and initialise
   MODE_TRACK,     // Tracking
   MODE_PAUSE,     // Pause tracking
-  MODE_REWIND,    // Rewind to start
+  MODE_REWD,
+  MODE_FFWD,
   MODE_DRIFT_OUT, // Drift align modes
   MODE_DRIFT_BACK,
   MODE_DISABLED   // For testing motor
@@ -69,6 +70,40 @@ const int LCD_SDL_PIN = A5;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 
+byte lcd_PLAY[8] = {
+  0b00000,
+  0b01000,
+  0b01100,
+  0b01110,
+  0b01100,
+  0b01000,
+  0b00000,
+  0b00000
+};
+
+byte lcd_REV[8] = {
+  0b00000,
+  0b00010,
+  0b00110,
+  0b01110,
+  0b00110,
+  0b00010,
+  0b00000,
+  0b00000
+};
+
+byte lcd_PAUSE[8] = {
+  0b00000,
+  0b11011,
+  0b11011,
+  0b11011,
+  0b11011,
+  0b11011,
+  0b00000,
+  0b00000
+};
+
+
 // LED
 const long BLINK_FAST_RATE = 150;
 const long BLINK_SLOW_RATE = 500;
@@ -101,7 +136,7 @@ const float SPEED_LUNAR = 14.685;
 const float SPEED_SOLAR = 15.0;
 const float SPEED_KING = 15.0369;
 
-const float SPEED_MAX = 450.0; // Max speed - about 30sec for a full translation, in arcsec/sec
+const float SPEED_MAX = 360.0; // Max speed - about 30sec for a full translation, in arcsec/sec
 const float ACCELERATION_TIME = 7.0; // Time to spend accelerating/decelerating, in sec
 const float DRIFT_ALIGN_SPEED = SPEED_SIDEREAL*10.0; // Max speed used to polar align, in arcsec/sec
 
@@ -169,7 +204,11 @@ void setup() {
   lcd.init();
   lcd.clear();
   lcd.backlight();
-  analogWrite(LCD_BL_PIN, 92);    // Backlight intensity
+  analogWrite(LCD_BL_PIN, 64);    // Backlight intensity
+
+  lcd.createChar(1, lcd_PLAY);
+  lcd.createChar(2, lcd_REV);
+  lcd.createChar(3, lcd_PAUSE);
 
   lcd.print("STARTING");
 
@@ -389,12 +428,8 @@ void loop() {
       break;
 
 
-    case MODE_REWIND:
-      //if(time-lastLcdUpdate > 500) {    // 2fps
-      //  lcdUpdateSpeed();
-      //  lcdUpdateButtons();
-      //  lastLcdUpdate = time;
-      //}
+    case MODE_REWD:
+    case MODE_FFWD:
       break;
   }
   stepper.run();
@@ -444,9 +479,16 @@ void setMode(Mode new_mode) {
       drift_back(driftTime, driftStartPos);
       break;
 
-    case MODE_REWIND:
-      track(0, SPEED_MAX, SPEED_MAX/ACCELERATION_TIME);
+    case MODE_REWD:
+      trackingSpeed = getTrackingSpeed(trackingMode);
+      track(0, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
       break;
+
+    case MODE_FFWD:
+      trackingSpeed = getTrackingSpeed(trackingMode);
+      track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+      break;
+    
     case MODE_DISABLED:
       break;
   }
@@ -477,8 +519,13 @@ void setTrackMode(TrackingMode new_mode) {
       if(mode==MODE_TRACK) {
         track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
       }
+      else if(mode==MODE_REWD || mode==MODE_FFWD) {
+        setMode(MODE_TRACK);
+      }
       break;
   }
+
+  lcdUpdateMode();
 }
 
 
@@ -603,8 +650,12 @@ void onButtonAPressed() {
 void onButtonBPressed() {
   switch(trackingMode) {
     case TRACK_FAST:
-      trackingSpeed = getTrackingSpeed(trackingMode);
-      track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+      if(mode == MODE_FFWD) {
+        setMode(MODE_PAUSE);
+      }
+      else if(mode != MODE_REWD) {
+        setMode(MODE_REWD);
+      };
       break;
 
     case TRACK_DRIFT_ALIGN:
@@ -633,8 +684,13 @@ void onButtonBPressed() {
 void onButtonCPressed() {
   switch(trackingMode) {
     case TRACK_FAST:
-      trackingSpeed = getTrackingSpeed(trackingMode);
-      track(0, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+      if(mode == MODE_REWD) {
+        setMode(MODE_PAUSE);
+      }
+      else if(mode != MODE_FFWD) {
+        setMode(MODE_FFWD);
+      };
+
       break;
 
     case TRACK_DRIFT_ALIGN:
@@ -664,22 +720,31 @@ void onButtonCPressed() {
 void onButtonDPressed() {
   switch(mode) {
     case MODE_TRACK:
-      if(trackingMode == TRACK_DRIFT_ALIGN)
+      if(trackingMode == TRACK_DRIFT_ALIGN) {
         setMode(MODE_DRIFT_OUT);
-      else
+      }
+      else {
         setMode(MODE_PAUSE);
+      }
       break;
 
     case MODE_PAUSE:
-      if(trackingMode == TRACK_DRIFT_ALIGN)
+      if(trackingMode == TRACK_DRIFT_ALIGN) {
         setMode(MODE_DRIFT_OUT);
-      else
+      }
+      else if(trackingMode != TRACK_FAST) {
         setMode(MODE_TRACK);
+      }
       break;
 
     case MODE_DRIFT_OUT:
     case MODE_DRIFT_BACK:
       setMode(MODE_TRACK);  // Cancel
+      break;
+
+    case MODE_FFWD:
+    case MODE_REWD:
+      setMode(MODE_PAUSE);
       break;
 
     default:
@@ -703,19 +768,22 @@ void lcdUpdateMode() {
       lcd.print("POWER ON");
       break;
     case MODE_TRACK:
-      lcd.print("TRACK   ");
+      lcd.print("TRACK \x01 ");     // 0x01 = Play
       break;
     case MODE_PAUSE:
-      lcd.print("PAUSE   ");
+      lcd.print("PAUSE \x03 ");     // 0x03 = Pause
       break;
     case MODE_DRIFT_OUT:
-      lcd.print("ALIGN < ");
+      lcd.print("ALIGN \x01\x01");
       break;
     case MODE_DRIFT_BACK:
-      lcd.print("ALIGN > ");
+      lcd.print("ALIGN \x02\x02");  // 0x02 = Rew
       break;
-    case MODE_REWIND:
-      lcd.print("REWIND  ");
+    case MODE_REWD:
+      lcd.print("REWD  \x02\x02");
+      break;
+    case MODE_FFWD:
+      lcd.print("FFWD  \x01\x01");
       break;
     default:
       lcd.print("        ");
@@ -841,8 +909,11 @@ const char* getModeName(Mode m) {
     case MODE_DRIFT_BACK:
       return "ALIGN";
       break;
-    case MODE_REWIND:
+    case MODE_REWD:
       return "REWIND";
+      break;
+    case MODE_FFWD:
+      return "FFWD";
       break;
     case MODE_DISABLED:
       return "DISABLED";
