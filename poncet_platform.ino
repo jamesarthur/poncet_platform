@@ -124,6 +124,7 @@ EasyButton buttonD(BUTTON_PIN_D, DEBOUNCE_TIME, false, false);
 //#define _A4988_
 //#define _DRV8825_
 #define _TMC2209_
+//#define _MY_WEIRD_2209_ // For some reason my driver doesn't bahave like a normal one - may be a fake?
 const long MOTOR_STEPS_PER_REVOLUTION = 200; 
 const long MOTOR_MICRO_STEPS = 8;    // 1 = full step; 2=1/2 step; 4=1/4 step; etc.
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
@@ -137,13 +138,13 @@ const float SPEED_SOLAR = 15.0;
 const float SPEED_KING = 15.0369;
 
 const float SPEED_MAX = 360.0; // Max speed - about 30sec for a full translation, in arcsec/sec
-const float ACCELERATION_TIME = 7.0; // Time to spend accelerating/decelerating, in sec
+const float ACCELERATION_TIME = 5.0; // Time to spend accelerating/decelerating, in sec
 const float DRIFT_ALIGN_SPEED = SPEED_SIDEREAL*10.0; // Max speed used to polar align, in arcsec/sec
 
 // PLATFORM DRIVE
 const long  DRIVE_GEAR_RATIO = 40;            // 40 = 40:1 
 const float DRIVE_BEARING_DIAMETER = 10.0;    // in mm
-const float DRIVE_DISTANCE_PER_ARCSEC = 212.0/(20.0*3600.0); // (distance driven/angle traversed) in mm of travel per arcsec of sky
+const float DRIVE_DISTANCE_PER_ARCSEC = 7.5/3600.0; // (distance driven/angle traversed) in mm of travel per arcsec of sky
 const float TOTAL_DRIVE_DISTANCE = 220.0; // max amount of distance to travel, in mm
 
 // INTERMEDIATE CALCULATIONS
@@ -245,6 +246,10 @@ void setup() {
     Serial.println("TMC2209");
     stepper.setPinsInverted(false, false, true);
   #endif
+  #ifdef _MY_WEIRD_2209_
+    Serial.println("MY_WEIRD_2209");
+    stepper.setPinsInverted(false, false, true);
+  #endif
   stepper.enableOutputs();  // Warm up
   setMotorMicrosteps(MOTOR_MICRO_STEPS);
   //stepper.setCurrentPosition(0);
@@ -271,6 +276,16 @@ void setup() {
   buttonB.onPressedFor(DEBOUNCE_TIME, onButtonBPressed);
   buttonC.onPressedFor(DEBOUNCE_TIME, onButtonCPressed);
   buttonD.onPressedFor(DEBOUNCE_TIME, onButtonDPressed);
+
+  // test
+  /*
+  stepper.setMaxSpeed(750.0);
+  stepper.setAcceleration(250.0);
+  stepper.runToNewPosition(MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICRO_STEPS);
+  stepper.runToNewPosition(0);
+  stepper.runToNewPosition(MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICRO_STEPS);
+  stepper.runToNewPosition(0);
+  */
 
   setMode(MODE_TRACK);
   setTrackMode(TRACK_SIDEREAL);
@@ -308,8 +323,8 @@ void setStepPins(int m0, int m1, int m2) {
 //  1/4  |  0 1 0  |  x x x  | 0 1 0
 //  1/8  |  1 1 0  |  0 0 x  | 1 1 0
 //  1/16 |  0 0 1  |  1 1 x  | 1 1 1
-//  1/32 |  1 0 1  |  0 1 x  | x x x
-//  1/64 |  x x x  |  1 0 x  | x x x
+//  1/32 |  1 0 1  |  1 0 x  | x x x
+//  1/64 |  x x x  |  0 1 x  | x x x
 void setMotorMicrosteps(unsigned int stepMode) {
 
   Serial.print("SETTING STEP MODE TO 1/");
@@ -368,6 +383,18 @@ void setMotorMicrosteps(unsigned int stepMode) {
       break;
     case 64:
       setStepPins(LOW, HIGH, LOW);
+      break;
+#endif
+#ifdef _MY_WEIRD_2209_
+    // Pin 3 low = stealthchop; high = spreadcycle
+    case 8:
+      setStepPins(LOW, LOW, LOW);
+      break;
+    case 64:
+      setStepPins(HIGH, HIGH, LOW);
+      break;
+    case 2:
+      setStepPins(HIGH, LOW, LOW);
       break;
 #endif
 
@@ -437,6 +464,7 @@ void loop() {
   buttonB.read();
   buttonC.read();
   buttonD.read();
+  delay(1);
 }
 
 
@@ -548,7 +576,7 @@ void track(long position, float speed, float acceleration) {
 
 // Stop as quickly as possible
 void stop(bool emergency) {
-  Serial.print("STOPPING.");
+  Serial.println("STOPPING.");
 
   if(emergency) {
     // Fastest acceleration
@@ -881,7 +909,7 @@ float getTrackingAcceleration(TrackingMode tm) {
       break;
     
     case TRACK_DRIFT_ALIGN:
-      ret = DRIFT_ALIGN_SPEED/ACCELERATION_TIME;
+      ret = SPEED_MAX/ACCELERATION_TIME;
       break;
 
     case TRACK_FAST:
