@@ -126,7 +126,7 @@ EasyButton buttonD(BUTTON_PIN_D, DEBOUNCE_TIME, false, false);
 #define _TMC2209_
 //#define _MY_WEIRD_2209_ // For some reason my driver doesn't bahave like a normal one - may be a fake?
 const long MOTOR_STEPS_PER_REVOLUTION = 200; 
-const long MOTOR_MICRO_STEPS = 8;    // 1 = full step; 2=1/2 step; 4=1/4 step; etc.
+const long MOTOR_MICROSTEPS = 8;    // 1 = full step; 2=1/2 step; 4=1/4 step; etc.
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
 
@@ -143,39 +143,25 @@ const float DRIFT_ALIGN_SPEED = SPEED_SIDEREAL*10.0; // Max speed used to polar 
 
 // PLATFORM DRIVE
 const long  DRIVE_GEAR_RATIO = 40;            // 40 = 40:1 
-const float DRIVE_BEARING_DIAMETER = 10.0;    // in mm
-const float DRIVE_DISTANCE_PER_ARCSEC = 7.5/3600.0; // (distance driven/angle traversed) in mm of travel per arcsec of sky
-const float TOTAL_DRIVE_DISTANCE = 220.0; // max amount of distance to travel, in mm
+const float DRIVE_BEARING_DIAMETER = 9.9;     // in mm
+const float DRIVE_DISTANCE_PER_ARCSEC = 109.0/(6.3*3600.0); // (distance driven/angle traversed) in mm of travel per arcsec of sky
+const float TOTAL_DRIVE_DISTANCE = 182.0; // max amount of distance to travel, in mm
 
 // INTERMEDIATE CALCULATIONS
 const float DRIVE_DISTANCE_PER_REVOLUTION = PI*DRIVE_BEARING_DIAMETER;
-const long STEPS_PER_REVOLUTION = DRIVE_GEAR_RATIO*MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICRO_STEPS;
+const long MICROSTEPS_PER_REVOLUTION = DRIVE_GEAR_RATIO*MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICROSTEPS;
 
 const float MAX_ROTATIONS = TOTAL_DRIVE_DISTANCE / DRIVE_DISTANCE_PER_REVOLUTION;
-const long MAX_STEPS = (long)(MAX_ROTATIONS*(float)STEPS_PER_REVOLUTION);
+const long MAX_STEPS = (long)(MAX_ROTATIONS*(float)MICROSTEPS_PER_REVOLUTION);
 
 //const float STEPS_PER_SECOND = (float)STEPS_PER_REVOLUTION*DRIVE_DISTANCE_PER_DEGREE_OF_SKY*DEGREE_OF_SKY_PER_SECOND/DRIVE_DISTANCE_PER_REVOLUTION;
-const float STEPS_PER_ARCSEC = (float)STEPS_PER_REVOLUTION*DRIVE_DISTANCE_PER_ARCSEC/DRIVE_DISTANCE_PER_REVOLUTION;
+const float MICROSTEPS_PER_ARCSEC = (float)MICROSTEPS_PER_REVOLUTION*DRIVE_DISTANCE_PER_ARCSEC/DRIVE_DISTANCE_PER_REVOLUTION;
 
 //const float RUNTIME_IN_SECONDS = (float)MAX_STEPS/STEPS_PER_SECOND;
 const long BACKTRACK_AMOUNT_STEPS = MAX_STEPS/10.0;
 
 
-/*
-// DERIVATIVE SPEEDS FOR MODES
-const float TRACKING_SPEED = STEPS_PER_SECOND;
-const float TRACKING_ACCELERATION = STEPS_PER_SECOND/10.0;  // 10s acceleration/deceleration
-
-const float STOP_DECELERATION = STEPS_PER_SECOND/3.0;
-const long STOP_BACKTRACK_AMOUNT = MAX_STEPS/10.0;
-const float STOP_BACKTRACK_SPEED = STEPS_PER_SECOND*20.0;
-
-const float REWIND_ACCELERATION = STEPS_PER_SECOND/10.0;
-const float REWIND_SPEED = STEPS_PER_SECOND*20.0;
-*/
-
 // vars
-//long lastLcdUpdate = 0;
 float trackingSpeed = 0.0;
 
 float driftTime = 20.0;
@@ -251,17 +237,17 @@ void setup() {
     stepper.setPinsInverted(false, false, true);
   #endif
   stepper.enableOutputs();  // Warm up
-  setMotorMicrosteps(MOTOR_MICRO_STEPS);
+  setMotorMicrosteps(MOTOR_MICROSTEPS);
   //stepper.setCurrentPosition(0);
   
   Serial.print("MOTOR - Steps:");
   Serial.print(MOTOR_STEPS_PER_REVOLUTION);
   Serial.print(", Step mode:1/");
-  Serial.print(MOTOR_MICRO_STEPS);
+  Serial.print(MOTOR_MICROSTEPS);
   Serial.print(", Gear ratio:");
   Serial.print(DRIVE_GEAR_RATIO);
   Serial.print(":1, Total steps/rev:");
-  Serial.println(STEPS_PER_REVOLUTION);
+  Serial.println(MICROSTEPS_PER_REVOLUTION);
 
   Serial.print("Runtime: ");
   Serial.print(MAX_STEPS/(getTrackingStepSpeed(TRACK_SIDEREAL)*60.0));
@@ -279,11 +265,11 @@ void setup() {
 
   // test
   /*
-  stepper.setMaxSpeed(750.0);
-  stepper.setAcceleration(250.0);
-  stepper.runToNewPosition(MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICRO_STEPS);
+  stepper.setMaxSpeed(MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICROSTEPS/10.0);  // 10sec / revolution
+  stepper.setAcceleration(1000);
+  stepper.runToNewPosition(5.0*MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICROSTEPS); // 5 times
   stepper.runToNewPosition(0);
-  stepper.runToNewPosition(MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICRO_STEPS);
+  stepper.runToNewPosition(5.0*MOTOR_STEPS_PER_REVOLUTION*MOTOR_MICROSTEPS);
   stepper.runToNewPosition(0);
   */
 
@@ -317,14 +303,14 @@ void setStepPins(int m0, int m1, int m2) {
 }
 
 // Pinouts for stepper driver
-// Steps | drv8825 | tmc2209 | a4988
-//   1   |  0 0 0  |  x x x  | 0 0 0
-//  1/2  |  1 0 0  |  x x x  | 1 0 0
-//  1/4  |  0 1 0  |  x x x  | 0 1 0
-//  1/8  |  1 1 0  |  0 0 x  | 1 1 0
-//  1/16 |  0 0 1  |  1 1 x  | 1 1 1
-//  1/32 |  1 0 1  |  1 0 x  | x x x
-//  1/64 |  x x x  |  0 1 x  | x x x
+// Steps | drv8825 | tmc2208 | tmc2209 | a4988
+//   1   |  0 0 0  |  x x x  |  x x x  | 0 0 0
+//  1/2  |  1 0 0  |  1 0 0  |  x x x  | 1 0 0
+//  1/4  |  0 1 0  |  0 1 0  |  x x x  | 0 1 0
+//  1/8  |  1 1 0  |  0 0 0  |  0 0 x  | 1 1 0
+//  1/16 |  0 0 1  |  1 1 0  |  1 1 x  | 1 1 1
+//  1/32 |  1 0 1  |  x x x  |  1 0 x  | x x x
+//  1/64 |  x x x  |  x x x  |  0 1 x  | x x x
 void setMotorMicrosteps(unsigned int stepMode) {
 
   Serial.print("SETTING STEP MODE TO 1/");
@@ -464,7 +450,7 @@ void loop() {
   buttonB.read();
   buttonC.read();
   buttonD.read();
-  delay(1);
+  //delay(1);
 }
 
 
@@ -490,7 +476,7 @@ void setMode(Mode new_mode) {
 
     case MODE_TRACK:
       lcdUpdateSpeed();
-      track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+      track(MAX_STEPS, getTrackingStepSpeed(trackingMode), getTrackingStepAcceleration(trackingMode));
       break;
 
     case MODE_PAUSE:
@@ -509,12 +495,12 @@ void setMode(Mode new_mode) {
 
     case MODE_REWD:
       trackingSpeed = getTrackingSpeed(trackingMode);
-      track(0, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+      track(0, trackingSpeed*MICROSTEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
       break;
 
     case MODE_FFWD:
       trackingSpeed = getTrackingSpeed(trackingMode);
-      track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+      track(MAX_STEPS, trackingSpeed*MICROSTEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
       break;
     
     case MODE_DISABLED:
@@ -545,7 +531,7 @@ void setTrackMode(TrackingMode new_mode) {
     case TRACK_FAST:
     default:
       if(mode==MODE_TRACK) {
-        track(MAX_STEPS, trackingSpeed*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+        track(MAX_STEPS, getTrackingStepSpeed(trackingMode), getTrackingStepAcceleration(trackingMode));
       }
       else if(mode==MODE_REWD || mode==MODE_FFWD) {
         setMode(MODE_TRACK);
@@ -563,9 +549,9 @@ void track(long position, float speed, float acceleration) {
   Serial.print(position);
   Serial.print(", speed: ");
   Serial.print(speed);
-  Serial.print("steps/sec, acceleration: ");
+  Serial.print(" microsteps/sec, acceleration: ");
   Serial.print(acceleration);
-  Serial.print("steps/sec2; current position ");
+  Serial.print(" microsteps/sec2; current position ");
   Serial.println(stepper.currentPosition());
   
   stepper.setMaxSpeed(speed);
@@ -580,7 +566,7 @@ void stop(bool emergency) {
 
   if(emergency) {
     // Fastest acceleration
-    stepper.setAcceleration(SPEED_MAX*STEPS_PER_ARCSEC/ACCELERATION_TIME);
+    stepper.setAcceleration(SPEED_MAX*MICROSTEPS_PER_ARCSEC/ACCELERATION_TIME);
   }
   stepper.stop();
 }
@@ -593,7 +579,7 @@ void drift_out() {
   Serial.print(" arcsec/s, position ");
   Serial.println(stepper.currentPosition());
 
-  track(MAX_STEPS, DRIFT_ALIGN_SPEED*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+  track(MAX_STEPS, DRIFT_ALIGN_SPEED*MICROSTEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
 }
 
 // Return to the original framing, trying to compensate for *some* of the star's movement
@@ -608,7 +594,7 @@ void drift_back(float elapsedTime, long originPos) {
   Serial.print(elapsedTime);
   Serial.println("s");
 
-  track(originPos+SPEED_SIDEREAL*STEPS_PER_ARCSEC*elapsedTime, DRIFT_ALIGN_SPEED*STEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
+  track(originPos+SPEED_SIDEREAL*MICROSTEPS_PER_ARCSEC*elapsedTime, DRIFT_ALIGN_SPEED*MICROSTEPS_PER_ARCSEC, getTrackingStepAcceleration(trackingMode));
 }
 
 
@@ -700,7 +686,7 @@ void onButtonBPressed() {
 
       if(mode==MODE_TRACK) {
         // Don't unpause automatically
-        stepper.setMaxSpeed(trackingSpeed*STEPS_PER_ARCSEC);
+        stepper.setMaxSpeed(trackingSpeed*MICROSTEPS_PER_ARCSEC);
       }
       break;
   }
@@ -735,7 +721,7 @@ void onButtonCPressed() {
 
       if(mode==MODE_TRACK) {
         // Don't unpause automatically
-        stepper.setMaxSpeed(trackingSpeed*STEPS_PER_ARCSEC);
+        stepper.setMaxSpeed(trackingSpeed*MICROSTEPS_PER_ARCSEC);
       }
       break;
   }
@@ -869,7 +855,7 @@ void lcdUpdateSpeed() {
 // CALCULATIONS
 
 // Returns tracking speed for the specified mode, in arcsec/sec
-float getTrackingSpeed(TrackingMode tm) {
+const float getTrackingSpeed(TrackingMode tm) {
   float ret = 0.0;
   switch(tm) {
     case TRACK_SIDEREAL:
@@ -898,7 +884,7 @@ float getTrackingSpeed(TrackingMode tm) {
 
 
 // Returns acceleration rate to accelerate to target speed over ACCELERATION_TIME seconds, in arcsec/sec^2
-float getTrackingAcceleration(TrackingMode tm) {
+const float getTrackingAcceleration(TrackingMode tm) {
   float ret = 0.0;
   switch(tm) {
     case TRACK_SIDEREAL:
@@ -977,13 +963,13 @@ const char* getTrackingModeName(TrackingMode tm) {
 }
 
 
-// Returns tracking speed for the specified mode, in steps/sec
-float getTrackingStepSpeed(TrackingMode tm) {
-  return getTrackingSpeed(tm)*STEPS_PER_ARCSEC;
+// Returns tracking speed for the specified mode, in microsteps/sec
+const float getTrackingStepSpeed(TrackingMode tm) {
+  return getTrackingSpeed(tm)*MICROSTEPS_PER_ARCSEC;
 }
 
 
 // Returns acceleration rate to accelerate to target speed over ACCELERATION_TIME seconds, in steps/sec^2
-float getTrackingStepAcceleration(TrackingMode tm) {
-  return getTrackingAcceleration(tm)*STEPS_PER_ARCSEC;
+const float getTrackingStepAcceleration(TrackingMode tm) {
+  return getTrackingAcceleration(tm)*MICROSTEPS_PER_ARCSEC;
 }
