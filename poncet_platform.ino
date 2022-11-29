@@ -126,7 +126,7 @@ EasyButton buttonD(BUTTON_PIN_D, DEBOUNCE_TIME, false, false);
 #define _TMC2209_
 //#define _MY_WEIRD_2209_ // For some reason my driver doesn't bahave like a normal one - may be a fake?
 const long MOTOR_STEPS_PER_REVOLUTION = 200; 
-const long MOTOR_MICROSTEPS = 8;    // 1 = full step; 2=1/2 step; 4=1/4 step; etc.
+const long MOTOR_MICROSTEPS = 64;    // 1 = full step; 2=1/2 step; 4=1/4 step; etc.
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
 
@@ -144,8 +144,8 @@ const float DRIFT_ALIGN_SPEED = SPEED_SIDEREAL*10.0; // Max speed used to polar 
 // PLATFORM DRIVE
 const long  DRIVE_GEAR_RATIO = 40;            // 40 = 40:1 
 const float DRIVE_BEARING_DIAMETER = 9.9;     // in mm
-const float DRIVE_DISTANCE_PER_ARCSEC = 109.0/(6.3*3600.0); // (distance driven/angle traversed) in mm of travel per arcsec of sky
-const float TOTAL_DRIVE_DISTANCE = 182.0; // max amount of distance to travel, in mm
+const float DRIVE_DISTANCE_PER_ARCSEC = 0.001636; //109.0/(6.3*3600.0); // (distance driven/angle traversed) in mm of travel per arcsec of sky
+const float TOTAL_DRIVE_DISTANCE = 182.0; // max amount of distance to travel before it needs to stop, in mm
 
 // INTERMEDIATE CALCULATIONS
 const float DRIVE_DISTANCE_PER_REVOLUTION = PI*DRIVE_BEARING_DIAMETER;
